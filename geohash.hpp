@@ -14,6 +14,7 @@
 constexpr size_t MAX_GEOHASH_LENGTH=12;
 constexpr size_t MAX_BINHASH_LENGTH=64;
 
+/// WGS84 point
 struct geolocation {
     double latitude;
     double longitude;
@@ -25,13 +26,13 @@ inline bool operator==(const geolocation &l, const geolocation &r)
 inline bool operator!=(const geolocation &l, const geolocation &r)
 { return (l.latitude!=r.latitude) || (l.longitude!=r.longitude); }
 
-// Distance
+/// Distance
 double distance(const geolocation &l, const geolocation &r);
 
 inline double operator-(const geolocation &l, const geolocation &r)
 { return distance(l, r); }
 
-
+/// Latitude/logitude bounding box 
 struct bounding_box {
     bounding_box()=default;
     
@@ -49,18 +50,23 @@ struct bounding_box {
     , max_lon(std::max(l1.longitude, l2.longitude))
     {}
     
+    /// Create a bounding box that contains the circle
     bounding_box(geolocation l, double distance);
     
+    /// Test if a point in the box
     bool contains(geolocation l) const {
         return (l.latitude>=min_lat) && (l.latitude<=max_lat) && (l.longitude>=min_lon) && (l.longitude<=max_lon);
     }
     
+    /// Center
     geolocation center() const { return geolocation{lat_center(), lon_center()};}
+    /// Apices
     geolocation bottom_left() const { return geolocation{min_lat, min_lon}; }
     geolocation bottom_right() const { return geolocation{min_lat, max_lon}; }
     geolocation top_left() const { return geolocation{max_lat, min_lon}; }
     geolocation top_right() const { return geolocation{max_lat, max_lon}; }
     
+    /// Edges
     double lat_range() const { return max_lat-min_lat; }
     double lon_range() const { return max_lon-min_lon; }
     double lat_err() const { return (max_lat-min_lat)/2; }
@@ -68,6 +74,7 @@ struct bounding_box {
     double lat_center() const { return (min_lat+max_lat)/2; }
     double lon_center() const { return (min_lon+max_lon)/2; }
 
+    /// Merge with other box
     bounding_box &merge(const bounding_box &b) {
         min_lat=std::min(min_lat, b.min_lat);
         max_lat=std::max(max_lat, b.max_lat);
@@ -76,17 +83,17 @@ struct bounding_box {
         return *this;
     }
     
-    // Returns the shortest edge of the box
+    /// Returns the shortest edge of the box
     double min_span() const;
     
-    // Default value is the largest box
+    /// Default value is the largest box
     double min_lat=-90.0;
     double max_lat=90.0;
     double min_lon=-180.0;
     double max_lon=180.0;
 };
 
-// Merge 2 bounding boxes
+/// Merge 2 bounding boxes
 inline bounding_box merge(const bounding_box &b1, const bounding_box &b2) {
     return bounding_box{
         std::min(b1.min_lat, b2.min_lat),
@@ -96,7 +103,7 @@ inline bounding_box merge(const bounding_box &b1, const bounding_box &b2) {
     };
 }
 
-// Binary hash code
+/// Binary hash code
 struct binary_hash {
     binary_hash()=default;
     binary_hash(const std::string &bitstring);
@@ -115,8 +122,11 @@ struct binary_hash {
     size_t precision=0;
 };
 
+/// Binary encode with specific precision
 binary_hash binary_encode(geolocation l, size_t bit_count);
+/// Decode binary code into a bounding box
 bounding_box decode(const binary_hash &bits);
+/// Get the neighbor on specific direction of this binary code
 inline binary_hash neighbor(const binary_hash &hash,
                             const std::pair<int, int> &direction)
 {
@@ -127,7 +137,7 @@ inline binary_hash neighbor(const binary_hash &hash,
     return binary_encode(cp, hash.size());
 }
 
-// Base32 hash string
+/// Base32 hash string
 std::string encode(geolocation l, size_t precision);
 bounding_box decode(const std::string &hash);
 inline std::string neighbor(const std::string &hash,
@@ -140,6 +150,7 @@ inline std::string neighbor(const std::string &hash,
     return encode(cp, hash.size());
 }
 
+/// Encode with specific ranges
 template<typename Container>
 void encode_precision_range(geolocation l,
                             std::back_insert_iterator<Container> i,
@@ -151,6 +162,7 @@ void encode_precision_range(geolocation l,
     }
 }
 
+/// Encode with specific ranges
 template<typename Container>
 void encode_precision_range(geolocation l,
                             Container &c,
@@ -160,6 +172,7 @@ void encode_precision_range(geolocation l,
     encode_precision_range(l, std::back_inserter(c), range_largest, range_smallest);
 }
 
+/// Test if the point in the bounding box represented by this hash code
 bool hash_contains(const std::string &hash, geolocation l);
 
 /// Returns hash code for the smallest bounding box contains the location and has span longer than dist*2

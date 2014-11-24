@@ -335,11 +335,3 @@ size_t binary_hash_precision(geolocation l, double dist) {
     }
     return 0;
 }
-
-
-
-
-
-
-
-
