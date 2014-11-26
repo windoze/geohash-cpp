@@ -26,21 +26,21 @@ inline bool operator==(const geolocation &l, const geolocation &r)
 inline bool operator!=(const geolocation &l, const geolocation &r)
 { return (l.latitude!=r.latitude) || (l.longitude!=r.longitude); }
 
-/// Distance
+/// Distance of 2 geolocations
 double distance(const geolocation &l, const geolocation &r);
 
 inline double operator-(const geolocation &l, const geolocation &r)
 { return distance(l, r); }
 
-/// Latitude/logitude bounding box 
+/// Latitude/longitude bounding box
 struct bounding_box {
     bounding_box()=default;
     
-    bounding_box(double minlat, double maxlat, double minlon, double maxlon)
-    : min_lat(std::min(minlat, maxlat))
-    , max_lat(std::max(minlat, maxlat))
-    , min_lon(std::min(minlon, maxlon))
-    , max_lon(std::max(minlon, maxlon))
+    bounding_box(double lat1, double lat2, double lon1, double lon2)
+    : min_lat(std::min(lat1, lat2))
+    , max_lat(std::max(lat1, lat2))
+    , min_lon(std::min(lon1, lon2))
+    , max_lon(std::max(lon1, lon2))
     {}
     
     bounding_box(geolocation l1, geolocation l2)
@@ -60,7 +60,7 @@ struct bounding_box {
     
     /// Center
     geolocation center() const { return geolocation{lat_center(), lon_center()};}
-    /// Apices
+    /// Corners
     geolocation bottom_left() const { return geolocation{min_lat, min_lon}; }
     geolocation bottom_right() const { return geolocation{min_lat, max_lon}; }
     geolocation top_left() const { return geolocation{max_lat, min_lon}; }
@@ -93,6 +93,15 @@ struct bounding_box {
     double max_lon=180.0;
 };
 
+inline bool operator==(const bounding_box &b1, const bounding_box &b2) {
+    return (b1.min_lat==b2.min_lat) && (b1.max_lat==b2.max_lat)
+    && (b1.min_lon==b2.min_lon) && (b1.max_lon==b2.max_lon);
+}
+
+inline bool operator!=(const bounding_box &b1, const bounding_box &b2) {
+    return !(b1==b2);
+}
+
 /// Merge 2 bounding boxes
 inline bounding_box merge(const bounding_box &b1, const bounding_box &b2) {
     return bounding_box{
@@ -106,13 +115,16 @@ inline bounding_box merge(const bounding_box &b1, const bounding_box &b2) {
 /// Binary hash code
 struct binary_hash {
     binary_hash()=default;
-    binary_hash(const std::string &bitstring);
+    binary_hash(uint64_t b, size_t p) : bits(b), precision(p) {}
+    binary_hash(const std::string &bit_string);
     binary_hash(geolocation l, double dist);
+
+    static binary_hash from_geohash(const std::string &hash);
     
     size_t size() const { return precision; }
     bool empty() const { return size()==0; }
-    bool test(size_t n) const { return (bits & (1 << (sizeof(bits)*8-precision-1)))==1; }
-    void push_back(bool bit) { bit=bit<<1 | (bit?1:0); precision++; }
+    bool test(size_t n) const { return (bits & (1ull << (precision-n)))!=0; }
+    void push_back(bool b) { bits<<=1; bits|=(b?1:0); precision++; }
 
     operator std::string() const { return to_string(); }
     
@@ -122,6 +134,16 @@ struct binary_hash {
     size_t precision=0;
 };
 
+inline bool operator==(const binary_hash &b1, const binary_hash &b2) {
+    return b1.empty() ? b2.empty() : (b1.bits==b2.bits && b1.precision==b2.precision);
+}
+
+inline bool operator!=(const binary_hash &b1, const binary_hash &b2) {
+    return !(b1==b2);
+}
+
+/// Required precision to represent the area
+size_t binary_hash_precision(geolocation l, double dist);
 /// Binary encode with specific precision
 binary_hash binary_encode(geolocation l, size_t bit_count);
 /// Decode binary code into a bounding box
@@ -173,7 +195,12 @@ void encode_precision_range(geolocation l,
 }
 
 /// Test if the point in the bounding box represented by this hash code
-bool hash_contains(const std::string &hash, geolocation l);
+inline bool hash_contains(const std::string &hash, geolocation l) {
+    return decode(hash).contains(l);
+}
+
+/// Returns hash precision for given location and distance range
+size_t hash_precision(geolocation l, double dist);
 
 /// Returns hash code for the smallest bounding box contains the location and has span longer than dist*2
 /// The circle range is contained by this box and its neighbors
@@ -181,7 +208,7 @@ bool hash_contains(const std::string &hash, geolocation l);
 std::string base_hash(geolocation l, double dist);
 
 /// Get the minimal geohash and its neighbors for given location and range
-/// Returns 9 geohash codes instead of one big box, which may actually contain 32 smaller boxes
+/// Returns 9 geohash codes instead of one big box, which contains 32 smaller boxes
 template<typename Container>
 void hash_codes(geolocation l, double dist, std::back_insert_iterator<Container> i) {
     std::string hash=base_hash(l, dist);

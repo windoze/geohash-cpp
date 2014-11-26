@@ -13,7 +13,8 @@
 // geolocation
 ////////////////////////////////////////////////////////////////////////////////
 
-constexpr long double EARTH_RADIUS=6371.393;
+/// Global average radii
+constexpr long double EARTH_RADIUS=6371.009;
 constexpr long double LONGITUDE_CIRCLE=EARTH_RADIUS*2*M_PI;
 
 inline long double radians(long double d) {
@@ -36,16 +37,16 @@ inline long double longitude_span(long double lat, long double lon1, long double
     return radians(std::abs(to180(lon1-lon2)))*latitude_circle(lat)/2/M_PI;
 }
 
-inline long double latitide_span(long double lat1, long double lat2) {
+inline long double latitude_span(long double lat1, long double lat2) {
     return radians(std::abs(to180(lat1-lat2)))*LONGITUDE_CIRCLE/2/M_PI;
 }
 
 double distance(const geolocation &l, const geolocation &r) {
     long double lat1 = radians(l.latitude);
     long double lat2 = radians(r.latitude);
-    long double dlat = radians(r.latitude - l.latitude);
-    long double dlon = radians(r.longitude - l.longitude);
-    long double a = sin(dlat/2.0) * sin(dlat/2.0) + cos(lat1) * cos(lat2) * sin(dlon/2.0) * sin(dlon/2.0);
+    long double lat_degree = radians(r.latitude - l.latitude);
+    long double lon_degree = radians(r.longitude - l.longitude);
+    long double a = sin(lat_degree/2.0) * sin(lat_degree/2.0) + cos(lat1) * cos(lat2) * sin(lon_degree /2.0) * sin(lon_degree /2.0);
     long double c = 2.0 * atan2(sqrt(a), sqrt(1.0-a));
     
     return EARTH_RADIUS * c;
@@ -67,7 +68,7 @@ bounding_box::bounding_box(geolocation l, double distance) {
 
 double bounding_box::min_span() const {
     // Returns the shortest side of the box
-    return std::min(latitide_span(min_lat, max_lat),
+    return std::min(latitude_span(min_lat, max_lat),
                     std::min(longitude_span(min_lat, min_lon, max_lon),
                              longitude_span(max_lat, min_lon, max_lon)));
 }
@@ -96,51 +97,21 @@ static const int base32_indexes[]={
     29, 30, 31,                     // 78-7A, 'x'..'z'
 };
 
-inline long double calc_height_degrees(size_t n) {
-    return 180/std::pow((long double)(2.0), 2.5*n+((n%2==0)?0:-0.5));
+size_t binary_hash_precision(geolocation l, double dist) {
+    for (size_t i = MAX_BINHASH_LENGTH; i >= 1; i--) {
+        bounding_box box=decode(binary_encode(l, i));
+        if (box.min_span()>=dist*2) {
+            return i;
+        }
+    }
+    return 0;
 }
 
-inline long double calc_width_degrees(size_t n) {
-    return 180/std::pow((long double)(2.0), 2.5*n+((n%2==0)?-1:-0.5));
-};
-
-static const long double height_degrees[]={
-    calc_height_degrees(0),
-    calc_height_degrees(1),
-    calc_height_degrees(2),
-    calc_height_degrees(3),
-    calc_height_degrees(4),
-    calc_height_degrees(5),
-    calc_height_degrees(6),
-    calc_height_degrees(7),
-    calc_height_degrees(8),
-    calc_height_degrees(9),
-    calc_height_degrees(10),
-    calc_height_degrees(11),
-    calc_height_degrees(12),
-};
-
-static const long double width_degrees[]={
-    calc_width_degrees(0),
-    calc_width_degrees(1),
-    calc_width_degrees(2),
-    calc_width_degrees(3),
-    calc_width_degrees(4),
-    calc_width_degrees(5),
-    calc_width_degrees(6),
-    calc_width_degrees(7),
-    calc_width_degrees(8),
-    calc_width_degrees(9),
-    calc_width_degrees(10),
-    calc_width_degrees(11),
-    calc_width_degrees(12),
-};
-
-binary_hash::binary_hash(const std::string &bitstring)
+binary_hash::binary_hash(const std::string &bit_string)
 : bits(0)
-, precision(bitstring.size())
+, precision(bit_string.size())
 {
-    for(auto c : bitstring) {
+    for(auto c : bit_string) {
         if (c=='1') {
             bits = (bits<<1) | 1;
         } else {
@@ -150,37 +121,42 @@ binary_hash::binary_hash(const std::string &bitstring)
 }
 
 binary_hash::binary_hash(geolocation l, double dist) {
-    bounding_box box(l, dist);
-    for (size_t i = MAX_BINHASH_LENGTH; i >= 1; i--) {
-        binary_hash hash=binary_encode(box.bottom_left(), i);
-        if (decode(hash).contains(box.top_right())) {
-            *this=hash;
-            return;
+    *this=binary_encode(l, binary_hash_precision(l, dist));
+}
+
+binary_hash binary_hash::from_geohash(const std::string &hash) {
+    binary_hash output;
+    for(auto c : hash) {
+        int char_index = base32_indexes[c-48];
+        if (char_index<0) {
+            throw std::invalid_argument("Invalid geohash");
+        }
+        for (int bits = 4; bits >= 0; --bits) {
+            output.push_back(((char_index >> bits) & 1)!=0);
         }
     }
+    return output;
 }
 
 std::string binary_hash::to_string() const {
-    std::string output(' ', precision);
-    uint64_t b=bits;
-    
+    std::string output(precision, ' ');
+    uint64_t b=bits<<(64-precision);
     for (int i=0; i<precision; i++) {
-        output[i]=(b & (uint64_t(-1))) ? '1' : '0';
+        output[i]=(b & 0x8000000000000000LL) ? '1' : '0';
         b<<=1;
     }
-    
     return output;
 }
 
 binary_hash binary_encode(geolocation l, size_t precision) {
     // bbox for the lat/lon + errors/ranges
     bounding_box bbox{ -90, 90, -180, 180 };
-    bool islon = true;
+    bool is_longitude = true;
     
     binary_hash output;
     
     while(output.size() < precision) {
-        if (islon) {
+        if (is_longitude) {
             if(l.longitude > bbox.lon_center()) {
                 output.push_back(true);
                 bbox.min_lon=bbox.lon_center();
@@ -197,7 +173,7 @@ binary_hash binary_encode(geolocation l, size_t precision) {
                 bbox.max_lat = bbox.lat_center();
             }
         }
-        islon = !islon;
+        is_longitude = !is_longitude;
     }
     return output;
 }
@@ -205,7 +181,7 @@ binary_hash binary_encode(geolocation l, size_t precision) {
 std::string encode(geolocation l, size_t precision) {
     // DecodedBBox for the lat/lon + errors
     bounding_box bbox{ -90, 90, -180, 180 };
-    bool islon = true;
+    bool is_longitude = true;
     int num_bits = 0;
     int hash_index = 0;
     
@@ -214,7 +190,7 @@ std::string encode(geolocation l, size_t precision) {
     size_t output_length = 0;
     
     while(output_length < precision) {
-        if (islon) {
+        if (is_longitude) {
             if(l.longitude > bbox.lon_center()) {
                 hash_index = (hash_index << 1) + 1;
                 bbox.min_lon=bbox.lon_center();
@@ -231,7 +207,7 @@ std::string encode(geolocation l, size_t precision) {
                 bbox.max_lat = bbox.lat_center();
             }
         }
-        islon = !islon;
+        is_longitude = !is_longitude;
         
         ++num_bits;
         if (5 == num_bits) {
@@ -248,11 +224,11 @@ bounding_box decode(const binary_hash &hash) {
     // bbox for the lat/lon + errors/ranges
     bounding_box output{ -90, 90, -180, 180 };
     
-    bool islon = true;
+    bool is_longitude = true;
     
-    for(size_t i=0; i<hash.size(); i++) {
+    for(size_t i=1; i<=hash.size(); i++) {
         bool bit = hash.test(i);
-        if (islon) {
+        if (is_longitude) {
             if(bit) {
                 output.min_lon = output.lon_center();
             } else {
@@ -260,12 +236,12 @@ bounding_box decode(const binary_hash &hash) {
             }
         } else {
             if(bit) {
-                output.min_lon = output.lat_center();
+                output.min_lat = output.lat_center();
             } else {
-                output.max_lon = output.lat_center();
+                output.max_lat = output.lat_center();
             }
         }
-        islon = !islon;
+        is_longitude = !is_longitude;
     }
     return output;
 }
@@ -273,17 +249,20 @@ bounding_box decode(const binary_hash &hash) {
 bounding_box decode(const std::string &hash) {
     bounding_box output{ -90, 90, -180, 180 };
     
-    bool islon = true;
+    bool is_longitude = true;
     
     for(auto &c : hash) {
+        if (c<'0' || c>'z') {
+            throw std::invalid_argument("Invalid geohash");
+        }
         int char_index = base32_indexes[c-48];
-        if (char_index<'0' || char_index>'z') {
+        if (char_index<0) {
             throw std::invalid_argument("Invalid geohash");
         }
         
         for (int bits = 4; bits >= 0; --bits) {
             int bit = (char_index >> bits) & 1;
-            if (islon) {
+            if (is_longitude) {
                 if(bit == 1) {
                     output.min_lon = output.lon_center();
                 } else {
@@ -291,19 +270,15 @@ bounding_box decode(const std::string &hash) {
                 }
             } else {
                 if(bit == 1) {
-                    output.min_lon = output.lat_center();
+                    output.min_lat = output.lat_center();
                 } else {
-                    output.max_lon = output.lat_center();
+                    output.max_lat = output.lat_center();
                 }
             }
-            islon = !islon;
+            is_longitude = !is_longitude;
         }
     }
     return output;
-}
-
-bool hash_contains(const std::string &hash, geolocation l) {
-    return decode(hash).contains(l);
 }
 
 size_t hash_precision(geolocation l, double dist) {
@@ -324,14 +299,4 @@ std::string base_hash(geolocation l, double dist) {
         }
     }
     return "";
-}
-
-size_t binary_hash_precision(geolocation l, double dist) {
-    for (size_t i = MAX_BINHASH_LENGTH; i >= 1; i--) {
-        bounding_box box=decode(binary_encode(l, i));
-        if (box.min_span()>=dist*2) {
-            return i;
-        }
-    }
-    return 0;
 }
